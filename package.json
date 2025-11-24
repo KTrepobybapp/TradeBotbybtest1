@@ -7,13 +7,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "ws-worker": "\"C:\\Program Files\\nodejs\\node.exe\" workers/bybit-ws-worker.js"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.0.2",
     "@supabase/supabase-js": "^2.0.0",
+    "bybit-api": "^4.4.2",
     "ccxt": "^4.0.0",
     "class-variance-authority": "^0.7.0",
+    "dotenv": "^17.2.3",
     "lucide-react": "^0.300.0",
     "next": "^14.0.0",
     "protobufjs": "^7.5.4",
