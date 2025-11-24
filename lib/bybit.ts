@@ -49,3 +49,40 @@ export function calculateTpSlPrices(
       : undefined;
   return { tpPrice: tp, slPrice: sl };
 }
+
+// Fetch recent account trades (fills) from Bybit via CCXT and normalize common fields
+export async function fetchRecentTrades(limit: number = 50, symbol?: string) {
+  const ex = tryCreateBybitClient();
+  if (!ex) return [];
+  try {
+    const trades = await ex.fetchMyTrades(symbol, undefined, limit);
+    return (trades || []).map((t: any) => {
+      const size =
+        typeof t.amount !== 'undefined'
+          ? t.amount
+          : t.info?.qty ?? t.info?.size ?? null;
+      const price =
+        typeof t.price !== 'undefined'
+          ? t.price
+          : t.info?.avgPrice ?? t.info?.price ?? null;
+      const orderId = t.order ?? t.info?.orderId ?? t.id ?? null;
+      const ts =
+        typeof t.timestamp === 'number'
+          ? t.timestamp
+          : (t.datetime ? Date.parse(t.datetime) : null) ?? (t.info?.timestamp ? Number(t.info?.timestamp) : null);
+      return {
+        symbol: t.symbol ?? t.info?.symbol ?? '—',
+        side: t.side ?? t.info?.side ?? '—',
+        size: size !== null ? Number(size) : null,
+        price: price !== null ? Number(price) : null,
+        order_id: orderId,
+        id: t.id ?? t.info?.tradeId ?? null,
+        timestamp: ts,
+        fee: t.fee?.cost ?? t.info?.execFee ?? null,
+        feeCurrency: t.fee?.currency ?? t.info?.feeCurrency ?? 'USDT',
+      };
+    });
+  } catch (e) {
+    return [];
+  }
+}
