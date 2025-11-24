@@ -79,7 +79,10 @@ async function upsertTradeEvent(event) {
 
   // Attempt to attach group_client_order_id using positionIdx if available
   let group_client_order_id = null;
-  const positionIdx = payload.positionIdx ?? payload.posIdx ?? null;
+  const rawPosIdx = payload.positionIdx ?? payload.posIdx ?? null;
+  const positionIdx = (rawPosIdx === 1 || rawPosIdx === '1' || rawPosIdx === 2 || rawPosIdx === '2')
+    ? Number(rawPosIdx)
+    : null;
   if (symbol && positionIdx != null) {
     const key = `${symbol}:${positionIdx}`;
     group_client_order_id = positionGroupMap.get(key) || (await preloadGroupForSymbolPosition(symbol, positionIdx));
@@ -118,6 +121,7 @@ async function upsertTradeEvent(event) {
     client_order_id: clientOrderId,
     bybit_order_id: bybitOrderId,
     group_client_order_id,
+    position_idx: positionIdx ?? null,
     created_at: new Date(timestamp).toISOString(),
   };
 
