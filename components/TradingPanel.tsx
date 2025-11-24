@@ -16,6 +16,9 @@ export default function TradingPanel() {
   const [result, setResult] = useState<string>('');
   const [isPending, startTransition] = useTransition();
 
+  const [clientOrderId, setClientOrderId] = useState('');
+  const [hedgeMode, setHedgeMode] = useState(false);
+
   const [spotSymbols, setSpotSymbols] = useState<string[]>([]);
   const [swapSymbols, setSwapSymbols] = useState<string[]>([]);
   const [marketType, setMarketType] = useState<'spot' | 'swap'>('swap');
@@ -49,6 +52,8 @@ export default function TradingPanel() {
         takeProfitPct,
         reduceOnly,
         useUSDT,
+        clientOrderId: clientOrderId || undefined,
+        hedgeMode,
       });
 
       if (res.ok) {
@@ -98,6 +103,20 @@ export default function TradingPanel() {
             <label className="mb-1 block text-xs text-neutral-400">User ID (Supabase)</label>
             <Input placeholder="uuid użytkownika" value={userId} onChange={(e) => setUserId(e.target.value)} />
           </div>
+          <div>
+            <label className="mb-1 block text-xs text-neutral-400">Client Order ID (opcjonalne)</label>
+            <Input placeholder="np. bot-alpha-2025-001" value={clientOrderId} onChange={(e) => setClientOrderId(e.target.value)} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-neutral-400">Hedge Mode (pozycje dwukierunkowe)</label>
+            <label className="mt-1 inline-flex items-center gap-2 text-xs text-neutral-400">
+              <input type="checkbox" checked={hedgeMode} onChange={(e) => setHedgeMode(e.target.checked)} />
+              Włącz hedging (ustawi właściwy positionIdx)
+            </label>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label className="mb-1 block text-xs text-neutral-400">Take Profit (%)</label>
             <Input type="number" step="0.001" value={takeProfitPct} onChange={(e) => setTakeProfitPct(Number(e.target.value))} />

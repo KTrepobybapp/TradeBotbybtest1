@@ -10,6 +10,8 @@ export type ExecuteTradeParams = {
   takeProfitPct?: number; // e.g. 0.02 for 2%
   reduceOnly?: boolean;
   useUSDT?: boolean; // interpret amount as notional USDT
+  clientOrderId?: string; // optional custom client order id
+  hedgeMode?: boolean; // account is in hedge mode (two-way), requires positionIdx 1/2
 };
 
 export async function getBybitMarkets() {
@@ -39,7 +41,9 @@ export async function executeTrade(
     return { ok: false, error: 'Missing userId in params' };
   }
 
-  const clientOrderId = randomUUID();
+  const clientOrderId = params.clientOrderId?.trim()
+    ? params.clientOrderId.trim()
+    : randomUUID();
 
   const supabase = getSupabaseAdmin();
   if (!supabase) {
@@ -92,14 +96,17 @@ export async function executeTrade(
     // Build order options depending on market type
     const orderOptions: any = { clientOrderId };
     if ((market as any)?.swap || (market as any)?.contract) {
-      // Derivatives / perpetual: TP/SL i reduceOnly wspierane
+      // Derivatives / perpetual: TP/SL i reduceOnly wspierane + positionIdx dla hedge mode
       orderOptions.takeProfit = tpRounded;
       orderOptions.stopLoss = slRounded;
       orderOptions.tpTriggerBy = 'LastPrice';
       orderOptions.slTriggerBy = 'LastPrice';
       orderOptions.reduceOnly = params.reduceOnly ?? false;
+      // Position index: 0 dla One-Way, 1 dla Long w Hedge Mode, 2 dla Short w Hedge Mode
+      const hedge = !!params.hedgeMode;
+      orderOptions.positionIdx = hedge ? (side === 'buy' ? 1 : 2) : 0;
     } else {
-      // Spot: bez TP/SL i reduceOnly, aby uniknąć błędu
+      // Spot: bez TP/SL, reduceOnly i positionIdx, aby uniknąć błędu
     }
 
     const order = await exchange.createOrder(symbol, 'market', side, baseAmount, undefined, orderOptions);
