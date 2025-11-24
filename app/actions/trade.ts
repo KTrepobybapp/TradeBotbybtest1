@@ -368,13 +368,21 @@ export async function closePositionMarketAction(symbol: string, side: 'long' | '
         if (!error && data?.client_order_id) groupClientOrderId = String(data.client_order_id);
       } catch {}
     }
-    // Build a unique client order id for Bybit close request (Bybit requires uniqueness), but persist the group id in our DB for tracking
+    // Build a truly unique client order id for Bybit close request, independent of (possibly long) group id
     const maxLen = Number(process.env.BYBIT_CLIENT_ORDER_ID_MAXLEN || '36');
-    if (groupClientOrderId) {
-      const suffix = '-CLOSE-' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
-      let candidate = `${groupClientOrderId}${suffix}`;
-      options.clientOrderId = candidate.length > maxLen ? candidate.slice(0, maxLen) : candidate;
-    }
+    const makeUniqueLinkId = (tag: string) => {
+      const now = new Date();
+      const yy = String(now.getFullYear()).slice(-2);
+      const MM = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      const HH = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+      const rand = Math.random().toString(36).slice(2, 8);
+      const base = `${yy}${MM}${dd}${HH}${mm}${ss}-${tag}-${rand}`;
+      return base.length > maxLen ? base.slice(0, maxLen) : base;
+    };
+    options.clientOrderId = makeUniqueLinkId('CLOSE');
 
     const order = await ex.createOrder(symbol, 'market', orderSide, amountToClose, undefined, options);
 
@@ -444,11 +452,19 @@ export async function closePositionLimitAction(symbol: string, side: 'long' | 's
       } catch {}
     }
     const maxLen = Number(process.env.BYBIT_CLIENT_ORDER_ID_MAXLEN || '36');
-    if (groupClientOrderId) {
-      const suffix = '-CLOSE-' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
-      let candidate = `${groupClientOrderId}${suffix}`;
-      options.clientOrderId = candidate.length > maxLen ? candidate.slice(0, maxLen) : candidate;
-    }
+    const makeUniqueLinkId = (tag: string) => {
+      const now = new Date();
+      const yy = String(now.getFullYear()).slice(-2);
+      const MM = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      const HH = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+      const rand = Math.random().toString(36).slice(2, 8);
+      const base = `${yy}${MM}${dd}${HH}${mm}${ss}-CLOSE-${rand}`;
+      return base.length > maxLen ? base.slice(0, maxLen) : base;
+    };
+    options.clientOrderId = makeUniqueLinkId('CLOSE');
 
     const order = await ex.createOrder(symbol, 'limit', orderSide, amountToClose, price, options);
 
@@ -505,6 +521,25 @@ export async function setPositionTradingStopAction(
     const category: string = market?.linear ? 'linear' : (market?.inverse ? 'inverse' : 'linear');
     const hedge = !!args.hedgeMode;
     const positionIdx = hedge ? (side === 'long' ? 1 : 2) : 0;
+
+    // Validate TP/SL direction against current price to avoid Bybit errors
+    try {
+      const ticker = await ex.fetchTicker(symbol);
+      const last = ticker.last ?? ticker.close ?? ticker.bid ?? ticker.ask;
+      const lastNum = typeof last === 'number' ? last : (last ? Number(last) : undefined);
+      if (typeof lastNum === 'number') {
+        if (typeof args.stopLoss === 'number') {
+          if ((side === 'long' && args.stopLoss >= lastNum) || (side === 'short' && args.stopLoss <= lastNum)) {
+            return { ok: false, error: `Nieprawidłowy kierunek SL: dla ${side === 'long' ? 'long' : 'short'} SL musi być ${side === 'long' ? '<' : '>'} od bieżącej ceny (${lastNum})` };
+          }
+        }
+        if (typeof args.takeProfit === 'number') {
+          if ((side === 'long' && args.takeProfit <= lastNum) || (side === 'short' && args.takeProfit >= lastNum)) {
+            return { ok: false, error: `Nieprawidłowy kierunek TP: dla ${side === 'long' ? 'long' : 'short'} TP musi być ${side === 'long' ? '>' : '<'} od bieżącej ceny (${lastNum})` };
+          }
+        }
+      }
+    } catch {}
 
     const params: any = {
       category,

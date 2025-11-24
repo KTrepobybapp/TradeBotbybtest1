@@ -27,6 +27,8 @@ export default function HistoryTable() {
           price: b.price,
           order_id: b.order_id,
           client_order_id: b.client_order_id || (b.order_id ? localMap.get(String(b.order_id)) : undefined) || '—',
+          fee: b.fee,
+          feeCurrency: b.feeCurrency,
         }))
         .sort((a: any, b: any) => (b.timestamp ?? 0) - (a.timestamp ?? 0))
       setRows(merged)
@@ -99,7 +101,7 @@ export default function HistoryTable() {
                     <TableCell className="font-mono text-xs">{r.order_id ?? '—'}</TableCell>
                     <TableCell className="font-mono text-xs">{r.client_order_id ?? (r.order_id ? (bybitToClient.get(String(r.order_id))?.client || '—') : '—')}</TableCell>
                     <TableCell className="font-mono text-xs">{r.order_id ? (bybitToClient.get(String(r.order_id))?.group || '—') : '—'}</TableCell>
-                    <TableCell>{'—'}</TableCell>
+                    <TableCell>{r.fee !== null && typeof r.fee !== 'undefined' ? `${Number(r.fee).toFixed(6)} ${r.feeCurrency}` : '—'}</TableCell>
                     <TableCell>{r.timestamp ? new Date(r.timestamp).toLocaleString() : '—'}</TableCell>
                   </TableRow>
                 ))}
