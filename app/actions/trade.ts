@@ -12,6 +12,23 @@ export type ExecuteTradeParams = {
   useUSDT?: boolean; // interpret amount as notional USDT
 };
 
+export async function getBybitMarkets() {
+  const ex = tryCreateBybitClient();
+  if (!ex) return { spot: [], swap: [] };
+  await ex.loadMarkets();
+  const spot: string[] = [];
+  const swap: string[] = [];
+  for (const m of Object.values((ex as any).markets || {})) {
+    const mm: any = m;
+    const symbol: string = mm.symbol;
+    if (mm.spot) spot.push(symbol);
+    if (mm.swap || mm.contract) swap.push(symbol);
+  }
+  spot.sort();
+  swap.sort();
+  return { spot, swap };
+}
+
 export async function executeTrade(
   symbol: string,
   side: 'buy' | 'sell',
@@ -63,23 +80,29 @@ export async function executeTrade(
     );
 
     const tpRounded =
-      tpPrice !== undefined ? roundToPrecision(tpPrice, market?.precision?.price) : undefined;
+      tpPrice !== undefined ? roundToPrecision(tpPrice, (market as any)?.precision?.price) : undefined;
     const slRounded =
-      slPrice !== undefined ? roundToPrecision(slPrice, market?.precision?.price) : undefined;
+      slPrice !== undefined ? roundToPrecision(slPrice, (market as any)?.precision?.price) : undefined;
 
     // Convert USDT notional to base amount if requested
     const baseAmount = params.useUSDT
-      ? roundToPrecision(amount / Number(last), market?.precision?.amount)
+      ? roundToPrecision(amount / Number(last), (market as any)?.precision?.amount)
       : amount;
 
-    const order = await exchange.createOrder(symbol, 'market', side, baseAmount, undefined, {
-      clientOrderId,
-      takeProfit: tpRounded,
-      stopLoss: slRounded,
-      tpTriggerBy: 'LastPrice',
-      slTriggerBy: 'LastPrice',
-      reduceOnly: params.reduceOnly ?? false,
-    } as any);
+    // Build order options depending on market type
+    const orderOptions: any = { clientOrderId };
+    if ((market as any)?.swap || (market as any)?.contract) {
+      // Derivatives / perpetual: TP/SL i reduceOnly wspierane
+      orderOptions.takeProfit = tpRounded;
+      orderOptions.stopLoss = slRounded;
+      orderOptions.tpTriggerBy = 'LastPrice';
+      orderOptions.slTriggerBy = 'LastPrice';
+      orderOptions.reduceOnly = params.reduceOnly ?? false;
+    } else {
+      // Spot: bez TP/SL i reduceOnly, aby uniknąć błędu
+    }
+
+    const order = await exchange.createOrder(symbol, 'market', side, baseAmount, undefined, orderOptions);
 
     const bybitOrderId = (order as any)?.id ?? (order as any)?.info?.orderId ?? null;
     const price = (order as any)?.average ?? (order as any)?.price ?? null;

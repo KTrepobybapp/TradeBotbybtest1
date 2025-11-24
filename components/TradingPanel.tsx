@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState, useTransition } from 'react';
+import React, { useEffect, useState, useTransition } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { executeTrade } from '../app/actions/trade';
+import { executeTrade, getBybitMarkets } from '../app/actions/trade';
 
 export default function TradingPanel() {
   const [symbol, setSymbol] = useState('BTC/USDT');
@@ -16,23 +16,39 @@ export default function TradingPanel() {
   const [result, setResult] = useState<string>('');
   const [isPending, startTransition] = useTransition();
 
+  const [spotSymbols, setSpotSymbols] = useState<string[]>([]);
+  const [swapSymbols, setSwapSymbols] = useState<string[]>([]);
+  const [marketType, setMarketType] = useState<'spot' | 'swap'>('swap');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { spot, swap } = await getBybitMarkets();
+        setSpotSymbols(spot);
+        setSwapSymbols(swap);
+        if (swap.length > 0) {
+          setMarketType('swap');
+          setSymbol(swap.includes(symbol) ? symbol : swap[0]);
+        } else if (spot.length > 0) {
+          setMarketType('spot');
+          setSymbol(spot.includes(symbol) ? symbol : spot[0]);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
+
   const submitOrder = (side: 'buy' | 'sell') => {
     setResult('');
 
     startTransition(async () => {
-      let tradeAmount = amount;
-
-      if (useUSDT) {
-        // convert USDT size to base amount using a simple fetch to last via server action would be ideal,
-        // but for simplicity, pass USDT amount and let the server compute TP/SL using last; we will approximate amount by USDT/last on server soon.
-        // For now we treat amount as contracts/base units if not using USDT.
-      }
-
-      const res = await executeTrade(symbol, side, tradeAmount, {
+      const res = await executeTrade(symbol, side, amount, {
         userId,
         stopLossPct,
         takeProfitPct,
         reduceOnly,
+        useUSDT,
       });
 
       if (res.ok) {
@@ -43,14 +59,29 @@ export default function TradingPanel() {
     });
   };
 
+  const currentList = marketType === 'swap' ? swapSymbols : spotSymbols;
+
   return (
     <div className="card">
       <div className="card-header">Trading Panel</div>
       <div className="card-body space-y-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
+            <label className="mb-1 block text-xs text-neutral-400">Rynek</label>
+            <div className="flex gap-2">
+              <Button variant={marketType === 'swap' ? 'success' : 'secondary'} onClick={() => setMarketType('swap')}>Perpetual</Button>
+              <Button variant={marketType === 'spot' ? 'success' : 'secondary'} onClick={() => setMarketType('spot')}>Spot</Button>
+            </div>
+          </div>
+          <div>
             <label className="mb-1 block text-xs text-neutral-400">Symbol</label>
-            <Input value={symbol} onChange={(e) => setSymbol(e.target.value)} />
+            <select className="w-full rounded border border-neutral-700 bg-neutral-900 p-2 text-sm" value={symbol} onChange={(e) => setSymbol(e.target.value)}>
+              {currentList.length === 0 ? (
+                <option>Brak symboli</option>
+              ) : (
+                currentList.map((s) => <option key={s} value={s}>{s}</option>)
+              )}
+            </select>
           </div>
           <div>
             <label className="mb-1 block text-xs text-neutral-400">Wielkość</label>
@@ -60,13 +91,13 @@ export default function TradingPanel() {
               Użyj USDT (przeliczenie na ilość kontraktów)
             </label>
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label className="mb-1 block text-xs text-neutral-400">User ID (Supabase)</label>
             <Input placeholder="uuid użytkownika" value={userId} onChange={(e) => setUserId(e.target.value)} />
           </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label className="mb-1 block text-xs text-neutral-400">Take Profit (%)</label>
             <Input type="number" step="0.001" value={takeProfitPct} onChange={(e) => setTakeProfitPct(Number(e.target.value))} />
@@ -75,17 +106,17 @@ export default function TradingPanel() {
             <label className="mb-1 block text-xs text-neutral-400">Stop Loss (%)</label>
             <Input type="number" step="0.001" value={stopLossPct} onChange={(e) => setStopLossPct(Number(e.target.value))} />
           </div>
-          <div className="flex items-end justify-between">
-            <label className="inline-flex items-center gap-2 text-xs text-neutral-400">
-              <input type="checkbox" checked={reduceOnly} onChange={(e) => setReduceOnly(e.target.checked)} />
-              Reduce Only
-            </label>
-          </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Button variant="success" size="lg" disabled={isPending || !userId} onClick={() => submitOrder('buy')}>LONG</Button>
-          <Button variant="destructive" size="lg" disabled={isPending || !userId} onClick={() => submitOrder('sell')}>SHORT</Button>
+        <div className="flex items-center justify-between">
+          <label className="inline-flex items-center gap-2 text-xs text-neutral-400">
+            <input type="checkbox" checked={reduceOnly} onChange={(e) => setReduceOnly(e.target.checked)} />
+            Reduce Only (tylko dla Perpetual)
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <Button variant="success" size="lg" disabled={isPending || !userId} onClick={() => submitOrder('buy')}>LONG</Button>
+            <Button variant="destructive" size="lg" disabled={isPending || !userId} onClick={() => submitOrder('sell')}>SHORT</Button>
+          </div>
         </div>
 
         <div className="text-xs text-neutral-400">{isPending ? 'Wysyłanie zlecenia...' : result}</div>
