@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useEffect, useState, useTransition } from 'react';
+import React, { useEffect, useMemo, useState, useTransition } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { executeTrade, getBybitMarkets } from '../app/actions/trade';
+import { executeTrade, getBybitMarkets, getBybitMarketInfo, getFavoriteSymbolsAction, addFavoriteSymbolAction, removeFavoriteSymbolAction } from '../app/actions/trade';
 
 export default function TradingPanel() {
   const [symbol, setSymbol] = useState('BTC/USDT');
@@ -11,30 +11,69 @@ export default function TradingPanel() {
   const [useUSDT, setUseUSDT] = useState(true);
   const [stopLossPct, setStopLossPct] = useState(0.01);
   const [takeProfitPct, setTakeProfitPct] = useState(0.02);
-  const [userId, setUserId] = useState('');
+  // const [userId, setUserId] = useState(''); // removed: using env fallback on server
   const [reduceOnly, setReduceOnly] = useState(false);
   const [result, setResult] = useState<string>('');
   const [isPending, startTransition] = useTransition();
 
   const [clientOrderId, setClientOrderId] = useState('');
-  const [hedgeMode, setHedgeMode] = useState(false);
+  const [hedgeMode, setHedgeMode] = useState(true);
 
   const [spotSymbols, setSpotSymbols] = useState<string[]>([]);
   const [swapSymbols, setSwapSymbols] = useState<string[]>([]);
   const [marketType, setMarketType] = useState<'spot' | 'swap'>('swap');
+  const [favoriteSymbols, setFavoriteSymbols] = useState<string[]>([]);
 
+  const [marketInfo, setMarketInfo] = useState<any | null>(null);
+  // Ergonomics: toggle for advanced settings
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Client Order ID prefix/suffix and validation
+  const BYBIT_MAXLEN = 36; // Bybit orderLinkId max length on UI side
+  const SUFFIX_MAXLEN = BYBIT_MAXLEN - 12; // 12-char time prefix (YYMMDDHHMMSS)
+  const PREFIX_REFRESH_MS = 1000; // refresh prefix every 1s to keep seconds accurate
+
+  function buildIdPrefix(date: Date = new Date()) {
+    const yy = String(date.getFullYear()).slice(2);
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    const hh = String(date.getHours()).padStart(2, '0');
+    const min = String(date.getMinutes()).padStart(2, '0');
+    const sec = String(date.getSeconds()).padStart(2, '0');
+    return `${yy}${mm}${dd}${hh}${min}${sec}`;
+  }
+
+  const [idPrefix, setIdPrefix] = useState<string>(buildIdPrefix());
+
+  useEffect(() => {
+    const timer = setInterval(() => setIdPrefix(buildIdPrefix()), PREFIX_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  const suffixLen = clientOrderId.length;
+  const totalLen = idPrefix.length + suffixLen;
+  const overLimit = totalLen > BYBIT_MAXLEN;
+  const fullPreview = (idPrefix + clientOrderId).slice(0, BYBIT_MAXLEN);
   useEffect(() => {
     (async () => {
       try {
         const { spot, swap } = await getBybitMarkets();
         setSpotSymbols(spot);
         setSwapSymbols(swap);
+        const favs = await getFavoriteSymbolsAction();
+        setFavoriteSymbols(favs || []);
         if (swap.length > 0) {
           setMarketType('swap');
-          setSymbol(swap.includes(symbol) ? symbol : swap[0]);
+          const initial = swap.includes(symbol) ? symbol : swap[0];
+          setSymbol(initial);
+          const info = await getBybitMarketInfo(initial);
+          setMarketInfo(info);
         } else if (spot.length > 0) {
           setMarketType('spot');
-          setSymbol(spot.includes(symbol) ? symbol : spot[0]);
+          const initial = spot.includes(symbol) ? symbol : spot[0];
+          setSymbol(initial);
+          const info = await getBybitMarketInfo(initial);
+          setMarketInfo(info);
         }
       } catch {
         // ignore
@@ -42,12 +81,21 @@ export default function TradingPanel() {
     })();
   }, []);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const info = await getBybitMarketInfo(symbol);
+        setMarketInfo(info);
+      } catch {}
+    })();
+  }, [symbol]);
+
   const submitOrder = (side: 'buy' | 'sell') => {
     setResult('');
 
     startTransition(async () => {
       const res = await executeTrade(symbol, side, amount, {
-        userId,
+        userId: '', // empty to trigger SUPABASE_DEFAULT_USER_ID fallback
         stopLossPct,
         takeProfitPct,
         reduceOnly,
@@ -58,6 +106,10 @@ export default function TradingPanel() {
 
       if (res.ok) {
         setResult(`OK: clientOrderId=${res.clientOrderId}`);
+        // Trigger global refresh of history 1s after placing an order
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('order-placed', { detail: { clientOrderId: res.clientOrderId, symbol } }));
+        }
       } else {
         setResult(`ERROR: ${res.error} (clientOrderId=${res.clientOrderId})`);
       }
@@ -65,6 +117,88 @@ export default function TradingPanel() {
   };
 
   const currentList = marketType === 'swap' ? swapSymbols : spotSymbols;
+
+  // Favorite symbols helpers for UI
+  const isFavorite = favoriteSymbols.includes(symbol);
+  const toggleFavorite = async () => {
+    if (isFavorite) {
+      const res = await removeFavoriteSymbolAction(symbol);
+      if (res && (res as any).ok) {
+        setFavoriteSymbols((prev) => prev.filter((s) => s !== symbol));
+      }
+    } else {
+      const res = await addFavoriteSymbolAction(symbol);
+      if (res && (res as any).ok) {
+        setFavoriteSymbols((prev) => [symbol, ...prev.filter((s) => s !== symbol)]);
+      }
+    }
+  };
+  const minAmountText = useMemo(() => {
+    if (!marketInfo) return '';
+    const type = marketInfo.type;
+    if (type === 'swap') {
+      const minContracts = marketInfo?.limits?.amount?.min;
+      const minCost = marketInfo?.limits?.cost?.min;
+      const cs = marketInfo.contractSize || 1;
+      const last = marketInfo.last || 0;
+      const minNotional = typeof minContracts === 'number' ? minContracts * cs * last : undefined;
+      const pieces = [] as string[];
+      if (typeof minContracts === 'number') pieces.push(`min kontrakty: ${minContracts}`);
+      if (typeof minNotional === 'number') pieces.push(`≈ min nominalnie: ${minNotional.toFixed(4)} ${marketInfo.quote}`);
+      if (typeof minCost === 'number') pieces.push(`min koszt: ${minCost} ${marketInfo.quote}`);
+      return pieces.join(' | ');
+    }
+    if (type === 'spot') {
+      const minAmount = marketInfo?.limits?.amount?.min;
+      const minCost = marketInfo?.limits?.cost?.min;
+      const last = marketInfo.last || 0;
+      const minNotional = typeof minAmount === 'number' ? minAmount * last : undefined;
+      const pieces = [] as string[];
+      if (typeof minAmount === 'number') pieces.push(`min ilość: ${minAmount} ${marketInfo.base}`);
+      if (typeof minNotional === 'number') pieces.push(`≈ min nominalnie: ${minNotional.toFixed(4)} ${marketInfo.quote}`);
+      if (typeof minCost === 'number') pieces.push(`min koszt: ${minCost} ${marketInfo.quote}`);
+      return pieces.join(' | ');
+    }
+    return '';
+  }, [marketInfo, useUSDT]);
+
+  const amountLabel = marketInfo?.type === 'swap'
+    ? (useUSDT ? 'Nominał (USDT/quote) → przeliczymy na kontrakty' : 'Kontrakty (liczba)')
+    : (useUSDT ? `Nominał (${marketInfo?.quote || 'USDT'}) → przeliczymy na ${marketInfo?.base || 'base'}` : `Ilość (${marketInfo?.base || 'base'})`);
+
+  const adjustToMinimum = () => {
+    if (!marketInfo) return;
+    const type = marketInfo.type;
+    const last = marketInfo.last || 0;
+    if (type === 'swap') {
+      const minContracts = marketInfo?.limits?.amount?.min;
+      const minCost = marketInfo?.limits?.cost?.min;
+      const cs = marketInfo.contractSize || 1;
+      if (useUSDT) {
+        const minNotionalFromContracts = typeof minContracts === 'number' ? minContracts * cs * last : undefined;
+        const target = Math.max(
+          typeof minNotionalFromContracts === 'number' ? minNotionalFromContracts : 0,
+          typeof minCost === 'number' ? minCost : 0
+        );
+        if (target > 0) setAmount(Number(target.toFixed(4)));
+      } else {
+        if (typeof minContracts === 'number') setAmount(Number(minContracts));
+      }
+    } else if (type === 'spot') {
+      const minAmount = marketInfo?.limits?.amount?.min;
+      const minCost = marketInfo?.limits?.cost?.min;
+      if (useUSDT) {
+        const minNotionalFromAmount = typeof minAmount === 'number' ? minAmount * last : undefined;
+        const target = Math.max(
+          typeof minNotionalFromAmount === 'number' ? minNotionalFromAmount : 0,
+          typeof minCost === 'number' ? minCost : 0
+        );
+        if (target > 0) setAmount(Number(target.toFixed(4)));
+      } else {
+        if (typeof minAmount === 'number') setAmount(Number(minAmount));
+      }
+    }
+  };
 
   return (
     <div className="card">
@@ -87,25 +221,72 @@ export default function TradingPanel() {
                 currentList.map((s) => <option key={s} value={s}>{s}</option>)
               )}
             </select>
+            <div className="mt-2 flex items-center justify-between">
+              <Button variant={isFavorite ? 'success' : 'secondary'} size="sm" onClick={toggleFavorite}>
+                {isFavorite ? 'Usuń z Ulubionych' : 'Dodaj do Ulubionych'}
+              </Button>
+            </div>
+            {favoriteSymbols.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {favoriteSymbols.map((fs) => (
+                  <Button key={fs} variant={fs === symbol ? 'success' : 'secondary'} size="sm" onClick={() => setSymbol(fs)}>
+                    {fs}
+                  </Button>
+                ))}
+              </div>
+            )}
+            {marketInfo && (
+              <div className="mt-2 text-[11px] text-neutral-500">
+                Precyzja: ilość {marketInfo?.precision?.amount ?? '—'} | cena {marketInfo?.precision?.price ?? '—'}
+              </div>
+            )}
           </div>
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">Wielkość</label>
+            <label className="mb-1 block text-xs text-neutral-400">{amountLabel}</label>
             <Input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
-            <label className="mt-2 inline-flex items-center gap-2 text-xs text-neutral-400">
-              <input type="checkbox" checked={useUSDT} onChange={(e) => setUseUSDT(e.target.checked)} />
-              Użyj USDT (przeliczenie na ilość kontraktów)
-            </label>
+            <div className="mt-2 flex items-center justify-between">
+              <label className="inline-flex items-center gap-2 text-xs text-neutral-400">
+                <input type="checkbox" checked={useUSDT} onChange={(e) => setUseUSDT(e.target.checked)} />
+                Użyj USDT (przeliczenie na ilość kontraktów)
+              </label>
+              <Button variant="secondary" size="sm" onClick={adjustToMinimum}>Dopasuj do minimum</Button>
+            </div>
+            {minAmountText && (
+              <div className="mt-2 text-[11px] text-neutral-500">{minAmountText}</div>
+            )}
           </div>
         </div>
 
+        {/* ClientOrderId UI: prefix + suffix with preview and validation */}
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">User ID (Supabase)</label>
-            <Input placeholder="uuid użytkownika" value={userId} onChange={(e) => setUserId(e.target.value)} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-neutral-400">Client Order ID (opcjonalne)</label>
-            <Input placeholder="np. bot-alpha-2025-001" value={clientOrderId} onChange={(e) => setClientOrderId(e.target.value)} />
+            <label className="mb-1 block text-xs text-neutral-400">Client Order ID</label>
+            <div className="grid grid-cols-1 gap-2">
+              <div className="text-[11px] text-neutral-500">Prefiks czasu (YYMMDDHHMMSS):</div>
+              <Input value={idPrefix} readOnly />
+              <div className="text-[11px] text-neutral-500">Sufiks (edytowalne, dozwolone: litery, cyfry, '_' i '-', max {SUFFIX_MAXLEN} znaków):</div>
+              <Input
+                placeholder="np. bot-alpha-001"
+                value={clientOrderId}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  const sanitized = raw.replace(/\s+/g, '-').replace(/[^A-Za-z0-9_-]/g, '');
+                  setClientOrderId(sanitized.slice(0, SUFFIX_MAXLEN));
+                }}
+              />
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-neutral-500">Długość sufiksu: {suffixLen}/{SUFFIX_MAXLEN}</span>
+                <span className={overLimit ? 'text-red-500' : 'text-neutral-500'}>Pełna długość: {Math.min(totalLen, BYBIT_MAXLEN)}/{BYBIT_MAXLEN}</span>
+              </div>
+              {suffixLen === 0 ? (
+                <div className="text-[11px] text-neutral-500">Brak sufiksu — po stronie serwera wygenerujemy UUID.</div>
+              ) : (
+                <div className="text-[11px] text-neutral-500">Pełny ID (podgląd): <span className="font-mono">{fullPreview}</span></div>
+              )}
+              {overLimit && (
+                <div className="text-[11px] text-red-500">Przekroczono maksymalną długość {BYBIT_MAXLEN}. Skróciliśmy podgląd. Ogranicz sufiks.</div>
+              )}
+            </div>
           </div>
           <div>
             <label className="mb-1 block text-xs text-neutral-400">Hedge Mode (pozycje dwukierunkowe)</label>
@@ -133,8 +314,8 @@ export default function TradingPanel() {
             Reduce Only (tylko dla Perpetual)
           </label>
           <div className="grid grid-cols-2 gap-3">
-            <Button variant="success" size="lg" disabled={isPending || !userId} onClick={() => submitOrder('buy')}>LONG</Button>
-            <Button variant="destructive" size="lg" disabled={isPending || !userId} onClick={() => submitOrder('sell')}>SHORT</Button>
+            <Button variant="success" size="lg" disabled={isPending || overLimit} onClick={() => submitOrder('buy')}>LONG</Button>
+            <Button variant="destructive" size="lg" disabled={isPending || overLimit} onClick={() => submitOrder('sell')}>SHORT</Button>
           </div>
         </div>
 

@@ -65,7 +65,10 @@ export async function fetchRecentTrades(limit: number = 50, symbol?: string) {
         typeof t.price !== 'undefined'
           ? t.price
           : t.info?.avgPrice ?? t.info?.price ?? null;
-      const orderId = t.order ?? t.info?.orderId ?? t.id ?? null;
+      // IMPORTANT: ensure order_id is the order identifier, not the trade id
+      const orderId = t.order ?? t.info?.orderId ?? null;
+      // Client order id (orderLinkId on Bybit)
+      const clientOrderId = t.clientOrderId ?? t.info?.orderLinkId ?? null;
       const ts =
         typeof t.timestamp === 'number'
           ? t.timestamp
@@ -76,7 +79,8 @@ export async function fetchRecentTrades(limit: number = 50, symbol?: string) {
         size: size !== null ? Number(size) : null,
         price: price !== null ? Number(price) : null,
         order_id: orderId,
-        id: t.id ?? t.info?.tradeId ?? null,
+        client_order_id: clientOrderId,
+        id: t.id ?? t.info?.tradeId ?? null, // keep trade id for row key
         timestamp: ts,
         fee: t.fee?.cost ?? t.info?.execFee ?? null,
         feeCurrency: t.fee?.currency ?? t.info?.feeCurrency ?? 'USDT',
