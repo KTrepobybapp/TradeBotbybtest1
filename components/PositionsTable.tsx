@@ -169,6 +169,7 @@ export default function PositionsTable() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>ID</TableHead>
                   <TableHead>Symbol</TableHead>
                   <TableHead>Side</TableHead>
                   <TableHead>Kontrakty</TableHead>
@@ -183,6 +184,7 @@ export default function PositionsTable() {
                   return (
                     <React.Fragment key={key}>
                       <TableRow>
+                        <TableCell className="font-mono text-xs break-all">{p.clientOrderId || '—'}</TableCell>
                         <TableCell>{p.symbol}</TableCell>
                         <TableCell className={p.side === 'long' ? 'text-emerald-400' : 'text-red-400'}>{p.side}</TableCell>
                         <TableCell>{p.contracts}</TableCell>
@@ -198,7 +200,7 @@ export default function PositionsTable() {
                       </TableRow>
                       {controls[key]?.expanded && (
                         <TableRow>
-                          <TableCell colSpan={6}>
+                          <TableCell colSpan={7}>
                             <div className="flex flex-col gap-3">
                               <div className="flex items-center gap-2">
                                 <Input className="w-20" type="number" min={1} max={100} value={controls[key]?.percent ?? 100} onChange={(e) => setControl(key, { percent: Number(e.target.value) })} />

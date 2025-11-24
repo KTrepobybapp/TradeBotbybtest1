@@ -296,6 +296,32 @@ export async function getOpenPositionsAction() {
       const sl = typeof p.stopLoss !== 'undefined' ? Number(p.stopLoss) : (typeof p.info?.stopLoss !== 'undefined' ? Number(p.info?.stopLoss) : null);
       return { symbol, side, contracts, entryPrice, unrealizedPnl, tp, sl };
     });
+
+    // Enrich with client order id (opening group id) from Supabase
+    const supa = getSupabaseAdmin();
+    const userId = (process.env.SUPABASE_DEFAULT_USER_ID || '').trim();
+    if (supa && userId && rows.length > 0) {
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const desiredSide = r.side === 'long' ? 'buy' : 'sell';
+        try {
+          const { data, error } = await supa
+            .from('trades')
+            .select('client_order_id')
+            .eq('user_id', userId)
+            .eq('symbol', r.symbol)
+            .eq('side', desiredSide)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+          const coid = !error && data?.client_order_id ? String(data.client_order_id) : null;
+          rows[i] = { ...r, clientOrderId: coid };
+        } catch {
+          rows[i] = { ...r, clientOrderId: null };
+        }
+      }
+    }
+
     return rows;
   } catch {
     return [];
@@ -319,7 +345,57 @@ export async function closePositionMarketAction(symbol: string, side: 'long' | '
     if (market?.swap || market?.contract) {
       options.positionIdx = hedgeMode ? (orderSide === 'buy' ? 2 : 1) : 0; // closing flips side index
     }
+
+    // Resolve group client order id (opening id) from Supabase and attach a unique close link id to the exchange order
+    const supabase = getSupabaseAdmin();
+    const effectiveUserId = (process.env.SUPABASE_DEFAULT_USER_ID || '').trim();
+    let groupClientOrderId: string | null = null;
+    if (supabase && effectiveUserId) {
+      const desiredOpenSide = side === 'long' ? 'buy' : 'sell';
+      try {
+        const { data, error } = await supabase
+          .from('trades')
+          .select('client_order_id')
+          .eq('user_id', effectiveUserId)
+          .eq('symbol', symbol)
+          .eq('side', desiredOpenSide)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        if (!error && data?.client_order_id) groupClientOrderId = String(data.client_order_id);
+      } catch {}
+    }
+    // Build a unique client order id for Bybit close request (Bybit requires uniqueness), but persist the group id in our DB for tracking
+    const maxLen = Number(process.env.BYBIT_CLIENT_ORDER_ID_MAXLEN || '36');
+    if (groupClientOrderId) {
+      const suffix = '-CLOSE-' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+      let candidate = `${groupClientOrderId}${suffix}`;
+      options.clientOrderId = candidate.length > maxLen ? candidate.slice(0, maxLen) : candidate;
+    }
+
     const order = await ex.createOrder(symbol, 'market', orderSide, amountToClose, undefined, options);
+
+    // Log closing in Supabase, keeping original opening client_order_id for linkage
+    if (supabase && effectiveUserId) {
+      const bybitOrderId = (order as any)?.id ?? (order as any)?.info?.orderId ?? null;
+      const price = (order as any)?.average ?? (order as any)?.price ?? null;
+      const status = (order as any)?.status ?? 'open';
+      try {
+        await supabase
+          .from('trades')
+          .insert({
+            user_id: effectiveUserId,
+            symbol,
+            side: orderSide,
+            size: amountToClose,
+            price,
+            client_order_id: groupClientOrderId ?? (options.clientOrderId || null),
+            bybit_order_id: bybitOrderId,
+            status,
+          });
+      } catch {}
+    }
+
     return { ok: true, order };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'Błąd zamykania market' };
@@ -343,7 +419,56 @@ export async function closePositionLimitAction(symbol: string, side: 'long' | 's
     if (market?.swap || market?.contract) {
       options.positionIdx = hedgeMode ? (orderSide === 'buy' ? 2 : 1) : 0;
     }
+
+    // Resolve group client order id (opening id) and attach a unique close link id to the exchange order
+    const supabase = getSupabaseAdmin();
+    const effectiveUserId = (process.env.SUPABASE_DEFAULT_USER_ID || '').trim();
+    let groupClientOrderId: string | null = null;
+    if (supabase && effectiveUserId) {
+      const desiredOpenSide = side === 'long' ? 'buy' : 'sell';
+      try {
+        const { data, error } = await supabase
+          .from('trades')
+          .select('client_order_id')
+          .eq('user_id', effectiveUserId)
+          .eq('symbol', symbol)
+          .eq('side', desiredOpenSide)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        if (!error && data?.client_order_id) groupClientOrderId = String(data.client_order_id);
+      } catch {}
+    }
+    const maxLen = Number(process.env.BYBIT_CLIENT_ORDER_ID_MAXLEN || '36');
+    if (groupClientOrderId) {
+      const suffix = '-CLOSE-' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+      let candidate = `${groupClientOrderId}${suffix}`;
+      options.clientOrderId = candidate.length > maxLen ? candidate.slice(0, maxLen) : candidate;
+    }
+
     const order = await ex.createOrder(symbol, 'limit', orderSide, amountToClose, price, options);
+
+    // Log closing in Supabase, keeping original opening client_order_id for linkage
+    if (supabase && effectiveUserId) {
+      const bybitOrderId = (order as any)?.id ?? (order as any)?.info?.orderId ?? null;
+      const avgPrice = (order as any)?.average ?? (order as any)?.price ?? null;
+      const status = (order as any)?.status ?? 'open';
+      try {
+        await supabase
+          .from('trades')
+          .insert({
+            user_id: effectiveUserId,
+            symbol,
+            side: orderSide,
+            size: amountToClose,
+            price: avgPrice,
+            client_order_id: groupClientOrderId ?? (options.clientOrderId || null),
+            bybit_order_id: bybitOrderId,
+            status,
+          });
+      } catch {}
+    }
+
     return { ok: true, order };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'Błąd zamykania limit' };
