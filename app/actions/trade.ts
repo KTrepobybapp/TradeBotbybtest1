@@ -107,6 +107,7 @@ export async function executeTrade(
           size: amount,
           price: null,
           client_order_id: clientOrderId,
+          group_client_order_id: clientOrderId,
           bybit_order_id: null,
           status: 'error',
         },
@@ -226,6 +227,7 @@ export async function executeTrade(
           size: amount,
           price,
           client_order_id: clientOrderId,
+          group_client_order_id: clientOrderId,
           bybit_order_id: bybitOrderId,
           status,
         },
@@ -250,6 +252,7 @@ export async function executeTrade(
           size: amount,
           price: null,
           client_order_id: clientOrderId,
+          group_client_order_id: clientOrderId,
           bybit_order_id: null,
           status: 'error',
         },
@@ -307,14 +310,14 @@ export async function getOpenPositionsAction() {
         try {
           const { data, error } = await supa
             .from('trades')
-            .select('client_order_id')
+            .select('group_client_order_id, client_order_id')
             .eq('user_id', userId)
             .eq('symbol', r.symbol)
             .eq('side', desiredSide)
             .order('created_at', { ascending: false })
             .limit(1)
             .single();
-          const coid = !error && data?.client_order_id ? String(data.client_order_id) : null;
+          const coid = !error && (data?.group_client_order_id || data?.client_order_id) ? String(data.group_client_order_id || data.client_order_id) : null;
           rows[i] = { ...r, clientOrderId: coid };
         } catch {
           rows[i] = { ...r, clientOrderId: null };
@@ -389,7 +392,8 @@ export async function closePositionMarketAction(symbol: string, side: 'long' | '
             side: orderSide,
             size: amountToClose,
             price,
-            client_order_id: groupClientOrderId ?? (options.clientOrderId || null),
+            client_order_id: options.clientOrderId || null,
+            group_client_order_id: groupClientOrderId ?? null,
             bybit_order_id: bybitOrderId,
             status,
           });
@@ -462,7 +466,8 @@ export async function closePositionLimitAction(symbol: string, side: 'long' | 's
             side: orderSide,
             size: amountToClose,
             price: avgPrice,
-            client_order_id: groupClientOrderId ?? (options.clientOrderId || null),
+            client_order_id: options.clientOrderId || null,
+            group_client_order_id: groupClientOrderId ?? null,
             bybit_order_id: bybitOrderId,
             status,
           });

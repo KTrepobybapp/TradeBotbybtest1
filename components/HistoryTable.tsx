@@ -9,6 +9,7 @@ export default function HistoryTable() {
   const [rows, setRows] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
+  const [bybitToClient, setBybitToClient] = useState<Map<string, { client: string; group?: string }>>(new Map())
 
   const fetchRows = async () => {
     try {
@@ -29,6 +30,16 @@ export default function HistoryTable() {
         }))
         .sort((a: any, b: any) => (b.timestamp ?? 0) - (a.timestamp ?? 0))
       setRows(merged)
+      // fetch local trades to map bybit_order_id -> client_order_id (and group_client_order_id)
+      const locals = await getRecentLocalTradesAction(200)
+      const map = new Map<string, { client: string; group?: string }>()
+      for (const r of locals || []) {
+        const boid = r?.bybit_order_id
+        const coid = r?.client_order_id
+        const goid = r?.group_client_order_id
+        if (boid && (coid || goid)) map.set(String(boid), { client: coid ? String(coid) : '', group: goid ? String(goid) : undefined })
+      }
+      setBybitToClient(map)
     } catch {
       // ignore
     } finally {
@@ -74,6 +85,7 @@ export default function HistoryTable() {
                   <TableHead>Cena</TableHead>
                   <TableHead>Order ID</TableHead>
                   <TableHead>Client Order ID</TableHead>
+                  <TableHead>Grupa ID</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -85,7 +97,10 @@ export default function HistoryTable() {
                     <TableCell>{typeof r.size === 'number' ? r.size : '—'}</TableCell>
                     <TableCell>{typeof r.price === 'number' ? r.price : '—'}</TableCell>
                     <TableCell className="font-mono text-xs">{r.order_id ?? '—'}</TableCell>
-                    <TableCell className="font-mono text-xs">{r.client_order_id ?? '—'}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.client_order_id ?? (r.order_id ? (bybitToClient.get(String(r.order_id))?.client || '—') : '—')}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.order_id ? (bybitToClient.get(String(r.order_id))?.group || '—') : '—'}</TableCell>
+                    <TableCell>{'—'}</TableCell>
+                    <TableCell>{r.timestamp ? new Date(r.timestamp).toLocaleString() : '—'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

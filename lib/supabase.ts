@@ -25,7 +25,7 @@ export async function fetchRecentLocalTrades(limit: number = 50) {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from('trades')
-    .select('id, symbol, side, size, price, client_order_id, bybit_order_id, status, created_at')
+    .select('id, symbol, side, size, price, client_order_id, group_client_order_id, bybit_order_id, status, created_at')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) return [];
@@ -36,6 +36,7 @@ export async function fetchRecentLocalTrades(limit: number = 50) {
     size: t.size,
     price: t.price,
     client_order_id: t.client_order_id,
+    group_client_order_id: t.group_client_order_id,
     bybit_order_id: t.bybit_order_id,
     status: t.status,
     timestamp: t.created_at ? Date.parse(t.created_at) : null,
