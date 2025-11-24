@@ -19,8 +19,14 @@ export default function PositionsTable() {
     }))
   }
 
-  const handleToggle = (key: string) => {
-    setControl(key, { expanded: !(controls[key]?.expanded ?? false) })
+  const handleToggle = (key: string, p?: any) => {
+    const nextExpanded = !(controls[key]?.expanded ?? false)
+    const patch: any = { expanded: nextExpanded }
+    if (nextExpanded) {
+      if (typeof p?.tp === 'number') patch.tpPrice = p.tp
+      if (typeof p?.sl === 'number') patch.slPrice = p.sl
+    }
+    setControl(key, patch)
   }
 
   const handleCloseMarket = async (symbol: string, side: 'long' | 'short', key: string) => {
@@ -185,7 +191,7 @@ export default function PositionsTable() {
                           {typeof p.unrealizedPnl === 'number' ? p.unrealizedPnl.toFixed(4) : '—'}
                         </TableCell>
                         <TableCell>
-                          <Button size="sm" variant="secondary" onClick={() => handleToggle(key)}>
+                          <Button size="sm" variant="secondary" onClick={() => handleToggle(key, p)}>
                             {controls[key]?.expanded ? 'Ukryj' : 'Szczegóły'}
                           </Button>
                         </TableCell>

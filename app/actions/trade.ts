@@ -199,6 +199,19 @@ export async function executeTrade(
 
     const order = await exchange.createOrder(symbol, 'market', side, orderAmount, undefined, orderOptions);
 
+    // Force-set TP/SL via trading-stop to ensure both are applied on Bybit
+    if ((market?.swap || market?.contract) && (tpRounded !== undefined || slRounded !== undefined)) {
+      try {
+        await setPositionTradingStopAction(symbol, side === 'buy' ? 'long' : 'short', {
+          takeProfit: tpRounded,
+          stopLoss: slRounded,
+          tpTriggerBy: 'LastPrice',
+          slTriggerBy: 'LastPrice',
+          hedgeMode: !!params.hedgeMode,
+        })
+      } catch {}
+    }
+
     const bybitOrderId = (order as any)?.id ?? (order as any)?.info?.orderId ?? null;
     const price = (order as any)?.average ?? (order as any)?.price ?? null;
     const status = (order as any)?.status ?? 'open';
@@ -279,7 +292,9 @@ export async function getOpenPositionsAction() {
       const contracts = Number(p.contracts ?? p.info?.size ?? 0);
       const entryPrice = typeof p.entryPrice !== 'undefined' ? Number(p.entryPrice) : (p.info?.avgPrice ? Number(p.info?.avgPrice) : null);
       const unrealizedPnl = typeof p.unrealizedPnl !== 'undefined' ? Number(p.unrealizedPnl) : (p.info?.unrealisedPnl ? Number(p.info?.unrealisedPnl) : null);
-      return { symbol, side, contracts, entryPrice, unrealizedPnl };
+      const tp = typeof p.takeProfit !== 'undefined' ? Number(p.takeProfit) : (typeof p.info?.takeProfit !== 'undefined' ? Number(p.info?.takeProfit) : null);
+      const sl = typeof p.stopLoss !== 'undefined' ? Number(p.stopLoss) : (typeof p.info?.stopLoss !== 'undefined' ? Number(p.info?.stopLoss) : null);
+      return { symbol, side, contracts, entryPrice, unrealizedPnl, tp, sl };
     });
     return rows;
   } catch {
